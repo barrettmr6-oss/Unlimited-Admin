@@ -1,0 +1,1078 @@
+--[[
+╔══════════════════════════════════════════════════════════════════════════╗
+║         BUILD A BOAT FOR TREASURE  —  Auto Builder  v6.0               ║
+║         Written to work with ui-engine-v2 (Singularity library)        ║
+╠══════════════════════════════════════════════════════════════════════════╣
+║  SETUP — TWO OPTIONS:                                                   ║
+║                                                                         ║
+║  OPTION A (Recommended):                                                ║
+║    Run library.lua first in your executor, THEN run this script.       ║
+║    The library returns itself so store it:                              ║
+║      local library = loadstring(game:HttpGet("YOUR_LIB_URL"))()        ║
+║    Then immediately run this file.                                      ║
+║                                                                         ║
+║  OPTION B (Single file):                                                ║
+║    Paste the full contents of library.lua ABOVE this script,           ║
+║    replacing the "return library" at the end of the library with       ║
+║    nothing, and delete the _G check below.                              ║
+║                                                                         ║
+║  HOW TO AUTO BUILD:                                                     ║
+║    1. Copy your saved JSON build to clipboard                           ║
+║    2. Click "Load Clipboard" in the UI                                  ║
+║    3. Check the block list / cost shown                                 ║
+║    4. Click "Start Build"                                               ║
+║                                                                         ║
+║  SAVE FORMAT (JSON):                                                    ║
+║    [ { "n":"Wood Block", "x":0, "y":4, "z":0,                          ║
+║         "rx":0, "ry":0, "rz":0, "r":163, "g":162, "b":165 }, ... ]    ║
+╚══════════════════════════════════════════════════════════════════════════╝
+--]]
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- STEP 1: GET THE LIBRARY
+-- The library.lua must have been executed already.
+-- It sets _G.lib or you pass it in. Either way works.
+-- ═══════════════════════════════════════════════════════════════════════
+local library
+do
+    -- Try _G first (if you ran library.lua standalone)
+    if _G.ImguiLib then
+        library = _G.ImguiLib
+    else
+        -- Try to load inline - replace URL with wherever you host library.lua
+        local ok, result = pcall(function()
+            return loadstring(game:HttpGet(
+                "https://raw.githubusercontent.com/YOURNAME/YOURREPO/main/library.lua"
+            , true))()
+        end)
+        if ok and type(result) == "table" and result.AddWindow then
+            library = result
+        end
+    end
+
+    if not library then
+        -- If library still not found, show a visible error via a basic ScreenGui
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "ABError"
+        sg.ResetOnSpawn = false
+        sg.Parent = game:GetService("CoreGui")
+        local f = Instance.new("Frame", sg)
+        f.Size = UDim2.new(0, 420, 0, 80)
+        f.Position = UDim2.new(0.5, -210, 0.5, -40)
+        f.BackgroundColor3 = Color3.fromRGB(200, 40, 40)
+        f.BorderSizePixel = 0
+        local t = Instance.new("TextLabel", f)
+        t.Size = UDim2.new(1, -20, 1, 0)
+        t.Position = UDim2.new(0, 10, 0, 0)
+        t.BackgroundTransparency = 1
+        t.TextColor3 = Color3.new(1,1,1)
+        t.TextWrapped = true
+        t.Font = Enum.Font.GothamBold
+        t.TextSize = 14
+        t.Text = "Auto Builder: library.lua not found!\nPlease execute library.lua FIRST, then re-run this script.\nOr set _G.ImguiLib = library before running."
+        task.delay(8, function() sg:Destroy() end)
+        error("Auto Builder: library.lua not loaded. Execute it first!", 2)
+        return
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- SERVICES
+-- ═══════════════════════════════════════════════════════════════════════
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local UserInputService  = game:GetService("UserInputService")
+local HttpService       = game:GetService("HttpService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace         = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BLOCK DATA
+-- All actual BABFT block names sourced from the official wiki (Feb 2024)
+-- Organised by in-game category with gold costs for the shop
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Cost table: block name → gold cost per block in the BABFT shop
+-- Source: BABFT wiki shop prices
+local BLOCK_COSTS = {
+    -- Materials
+    ["Wood Block"]              = 1,
+    ["Wood Rod"]                = 1,
+    ["Wood Wedge"]              = 1,
+    ["Wood Corner Wedge"]       = 1,
+    ["Wood Truss"]              = 1,
+    ["Concrete"]                = 2,
+    ["Concrete Rod"]            = 2,
+    ["Concrete Wedge"]          = 2,
+    ["Concrete Corner Wedge"]   = 2,
+    ["Plastic Block"]           = 3,
+    ["Plastic Rod"]             = 3,
+    ["Plastic Wedge"]           = 3,
+    ["Plastic Corner Wedge"]    = 3,
+    ["Sandstone Block"]         = 3,
+    ["Sandstone Rod"]           = 3,
+    ["Sandstone Wedge"]         = 3,
+    ["Sandstone Corner Wedge"]  = 3,
+    ["Ice Block"]               = 5,
+    ["Ice Rod"]                 = 5,
+    ["Ice Wedge"]               = 5,
+    ["Ice Corner Wedge"]        = 5,
+    ["Brick Block"]             = 5,
+    ["Brick Rod"]               = 5,
+    ["Brick Wedge"]             = 5,
+    ["Brick Corner Wedge"]      = 5,
+    ["Stone"]                   = 8,
+    ["Stone Rod"]               = 8,
+    ["Stone Wedge"]             = 8,
+    ["Stone Corner Wedge"]      = 8,
+    ["Gold Block"]              = 10,
+    ["Gold Rod"]                = 10,
+    ["Gold Wedge"]              = 10,
+    ["Gold Corner Wedge"]       = 10,
+    ["Neon Block"]              = 10,
+    ["Neon Rod"]                = 10,
+    ["Neon Wedge"]              = 10,
+    ["Neon Corner Wedge"]       = 10,
+    ["Obsidian Block"]          = 15,
+    ["Obsidian Rod"]            = 15,
+    ["Obsidian Wedge"]          = 15,
+    ["Obsidian Corner Wedge"]   = 15,
+    ["Titanium Block"]          = 20,
+    ["Titanium Rod"]            = 20,
+    ["Titanium Wedge"]          = 20,
+    ["Titanium Corner Wedge"]   = 20,
+    ["Bouncy Block"]            = 15,
+    ["Toy Block"]               = 10,
+    ["Glue"]                    = 5,
+    -- Ability blocks
+    ["Thruster"]                = 25,
+    ["Large Thruster"]          = 50,
+    ["Hover Thruster"]          = 40,
+    ["Jet Turbine"]             = 60,
+    ["Large Jet Turbine"]       = 100,
+    ["Boat Motor"]              = 30,
+    ["Large Boat Motor"]        = 60,
+    ["Balloon Block"]           = 20,
+    ["Car Seat"]                = 25,
+    ["Pilot Seat"]              = 25,
+    ["Seat"]                    = 10,
+    ["Big Cannon"]              = 75,
+    ["Cannon"]                  = 40,
+    ["Laser Launcher"]          = 150,
+    ["Harpoon"]                 = 35,
+    ["Dual Harpoon"]            = 60,
+    ["Wheel"]                   = 20,
+    ["Big Wheel"]               = 35,
+    ["Huge Wheel"]              = 60,
+    ["Back Wheel"]              = 20,
+    ["Front Wheel"]             = 20,
+    ["Lever"]                   = 15,
+    ["Big Switch"]              = 25,
+    ["Button"]                  = 15,
+    ["Servo"]                   = 50,
+    ["Gyro"]                    = 40,
+    ["Portal"]                  = 100,
+    ["Magnet"]                  = 50,
+    ["Shield Generator"]        = 80,
+    ["Jetpack"]                 = 75,
+    ["Mini Jetpack"]            = 40,
+    ["Boxing Glove"]            = 30,
+    ["Parachute"]               = 20,
+    ["Firework"]                = 25,
+    ["Teleporter"]              = 80,
+    ["Bomb"]                    = 30,
+    ["Dynamite"]                = 20,
+    ["Camera"]                  = 30,
+    -- Decoration
+    ["Mast"]                    = 10,
+    ["Helm"]                    = 15,
+    ["Anchor"]                  = 10,
+    ["Sail"]                    = 20,
+    ["Bar"]                     = 8,
+    ["Bread"]                   = 5,
+    ["Cake"]                    = 15,
+    ["Flag"]                    = 10,
+    ["Plushie 1"]               = 20,
+    ["Common Chest Block"]      = 0,
+    ["Uncommon Chest Block"]    = 0,
+    ["Rare Chest Block"]        = 0,
+    ["Epic Chest Block"]        = 0,
+    ["Legendary Chest Block"]   = 0,
+}
+
+-- Organised lists for UI dropdowns
+local BLOCKS_MATERIAL = {
+    "Wood Block","Wood Rod","Wood Wedge","Wood Corner Wedge","Wood Truss",
+    "Concrete","Concrete Rod","Concrete Wedge","Concrete Corner Wedge",
+    "Plastic Block","Plastic Rod","Plastic Wedge","Plastic Corner Wedge",
+    "Sandstone Block","Sandstone Rod","Sandstone Wedge","Sandstone Corner Wedge",
+    "Ice Block","Ice Rod","Ice Wedge","Ice Corner Wedge",
+    "Brick Block","Brick Rod","Brick Wedge","Brick Corner Wedge",
+    "Stone","Stone Rod","Stone Wedge","Stone Corner Wedge",
+    "Gold Block","Gold Rod","Gold Wedge","Gold Corner Wedge",
+    "Neon Block","Neon Rod","Neon Wedge","Neon Corner Wedge",
+    "Obsidian Block","Obsidian Rod","Obsidian Wedge","Obsidian Corner Wedge",
+    "Titanium Block","Titanium Rod","Titanium Wedge","Titanium Corner Wedge",
+    "Bouncy Block","Toy Block","Glue",
+}
+local BLOCKS_ABILITY = {
+    "Thruster","Large Thruster","Hover Thruster",
+    "Jet Turbine","Large Jet Turbine",
+    "Boat Motor","Large Boat Motor",
+    "Balloon Block",
+    "Car Seat","Pilot Seat","Seat",
+    "Big Cannon","Cannon","Laser Launcher","Harpoon","Dual Harpoon",
+    "Wheel","Big Wheel","Huge Wheel","Back Wheel","Front Wheel",
+    "Lever","Big Switch","Button","Servo","Gyro",
+    "Portal","Magnet","Shield Generator",
+    "Jetpack","Mini Jetpack","Boxing Glove","Parachute",
+    "Firework","Teleporter","Bomb","Dynamite","Camera",
+}
+local BLOCKS_DECO = {
+    "Mast","Helm","Anchor","Sail",
+    "Bar","Bread","Cake","Flag","Plushie 1",
+    "Common Chest Block","Uncommon Chest Block","Rare Chest Block",
+    "Epic Chest Block","Legendary Chest Block",
+}
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- STATE
+-- ═══════════════════════════════════════════════════════════════════════
+local S = {
+    -- session
+    running     = false,
+    paused      = false,
+    thread      = nil,
+    -- settings
+    safeMode    = true,
+    speed       = 5,       -- blocks per second
+    multiplier  = 1,
+    moveStep    = 4,
+    defaultBlock= "Wood Block",
+    -- placement offsets applied on top of loaded CFrame
+    offX=0, offY=0, offZ=0,
+    rotX=0, rotY=0, rotZ=0,
+    -- progress counters
+    built=0, failed=0, total=0,
+    -- loaded build
+    buildData   = nil,
+    -- status string (shown in UI)
+    status      = "Ready. Load a build then press Start.",
+    -- console handle
+    con         = nil,
+    -- preview parts
+    prevParts   = {},
+    -- analysis results (set after analysis)
+    missingStr  = "",
+    costStr     = "",
+}
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- LOGGING  (prints + feeds UI console)
+-- ═══════════════════════════════════════════════════════════════════════
+local function log(msg)
+    local line = "[" .. os.date("%H:%M:%S") .. "] " .. tostring(msg)
+    print(line)
+    if S.con then
+        pcall(function() S.con:Log(line) end)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- PLOT FINDER
+-- ═══════════════════════════════════════════════════════════════════════
+local function getPlot()
+    for _, cname in ipairs({"Plots","Teams","BuildAreas","Islands"}) do
+        local container = Workspace:FindFirstChild(cname)
+        if container then
+            for _, child in ipairs(container:GetChildren()) do
+                if child.Name == LocalPlayer.Name then return child end
+                local attr = child:GetAttribute and child:GetAttribute("Owner")
+                if attr == LocalPlayer.Name then return child end
+            end
+        end
+    end
+    return Workspace:FindFirstChild(LocalPlayer.Name .. "'s Plot")
+        or Workspace:FindFirstChild(LocalPlayer.Name)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BUILD FILE PARSER
+-- Handles two JSON formats:
+--   FORMAT A (compact):  { "n":"Wood Block", "x":0,"y":4,"z":0, "rx":0,"ry":0,"rz":0, "r":163,"g":162,"b":165 }
+--   FORMAT B (verbose):  { "Name":"Wood Block", "Position":{X,Y,Z}, "Rotation":{X,Y,Z}, "CFrame":[12 floats], "Color":[r,g,b] }
+-- Also handles legacy CSV: blockName,x,y,z[,rx,ry,rz]
+-- ═══════════════════════════════════════════════════════════════════════
+local function parseBuild(raw)
+    if not raw or #raw < 3 then return nil, "Input is empty" end
+    raw = raw:match("^%s*(.-)%s*$")
+
+    if raw:sub(1,1) == "[" or raw:sub(1,1) == "{" then
+        local ok, data = pcall(HttpService.JSONDecode, HttpService, raw)
+        if not ok then return nil, "JSON error: " .. tostring(data) end
+
+        local list = data
+        if type(data) == "table" and type(data[1]) ~= "table" then
+            list = data.blocks or data.Blocks or data.parts or {}
+        end
+        if type(list) ~= "table" or #list == 0 then
+            return nil, "No block entries found in JSON"
+        end
+
+        local out = {}
+        for _, b in ipairs(list) do
+            -- Block name — try both compact and verbose keys
+            local name = b.n or b.Name or b.name or S.defaultBlock
+
+            -- CFrame — try 3 formats
+            local cf
+            -- Format 1: 12-number array under "CFrame"
+            if type(b.CFrame) == "table" and #b.CFrame >= 12 then
+                local t = b.CFrame
+                cf = CFrame.new(t[1],t[2],t[3],t[4],t[5],t[6],t[7],t[8],t[9],t[10],t[11],t[12])
+            -- Format 2: compact x,y,z + rx,ry,rz
+            elseif b.x ~= nil or b.X ~= nil then
+                local px = tonumber(b.x or b.X) or 0
+                local py = tonumber(b.y or b.Y) or 0
+                local pz = tonumber(b.z or b.Z) or 0
+                local rx = math.rad(tonumber(b.rx or b.RX) or 0)
+                local ry = math.rad(tonumber(b.ry or b.RY) or 0)
+                local rz = math.rad(tonumber(b.rz or b.RZ) or 0)
+                cf = CFrame.new(px,py,pz) * CFrame.Angles(rx,ry,rz)
+            -- Format 3: Position table + Rotation table
+            elseif type(b.Position) == "table" or type(b.position) == "table" then
+                local p = b.Position or b.position or {}
+                local r = b.Rotation or b.rotation or {}
+                local px = tonumber(p.X or p.x) or 0
+                local py = tonumber(p.Y or p.y) or 0
+                local pz = tonumber(p.Z or p.z) or 0
+                local rx = math.rad(tonumber(r.X or r.x) or 0)
+                local ry = math.rad(tonumber(r.Y or r.y) or 0)
+                local rz = math.rad(tonumber(r.Z or r.z) or 0)
+                cf = CFrame.new(px,py,pz) * CFrame.Angles(rx,ry,rz)
+            else
+                cf = CFrame.new(0,0,0)
+            end
+
+            -- Colour
+            local col = Color3.fromRGB(163,162,165) -- default BABFT grey
+            if type(b.Color) == "table" then
+                local c = b.Color
+                local rv = c[1] or c.R or c.r or 163
+                local gv = c[2] or c.G or c.g or 162
+                local bv = c[3] or c.B or c.b or 165
+                -- detect if values are 0-1 or 0-255
+                if rv <= 1 and gv <= 1 and bv <= 1 then
+                    col = Color3.new(rv,gv,bv)
+                else
+                    col = Color3.fromRGB(rv,gv,bv)
+                end
+            elseif b.r ~= nil then
+                col = Color3.fromRGB(
+                    tonumber(b.r) or 163,
+                    tonumber(b.g) or 162,
+                    tonumber(b.b) or 165
+                )
+            end
+
+            out[#out+1] = { Name=name, CF=cf, Color=col }
+        end
+
+        log("Parsed " .. #out .. " blocks from JSON")
+        return out, nil
+    end
+
+    -- Legacy CSV
+    local out = {}
+    for line in raw:gmatch("[^\r\n]+") do
+        line = line:match("^%s*(.-)%s*$")
+        if #line > 0 and not line:match("^%-%-") then
+            local p = {}
+            for tok in line:gmatch("[^,]+") do p[#p+1] = tok:match("^%s*(.-)%s*$") end
+            if #p >= 4 then
+                local cf = CFrame.new(tonumber(p[2]) or 0, tonumber(p[3]) or 0, tonumber(p[4]) or 0)
+                    * CFrame.Angles(
+                        math.rad(tonumber(p[5]) or 0),
+                        math.rad(tonumber(p[6]) or 0),
+                        math.rad(tonumber(p[7]) or 0)
+                    )
+                out[#out+1] = { Name=p[1], CF=cf, Color=Color3.fromRGB(163,162,165) }
+            end
+        end
+    end
+    if #out > 0 then
+        log("Parsed " .. #out .. " blocks from CSV")
+        return out, nil
+    end
+
+    return nil, "Unrecognised format — expected JSON array or CSV"
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BUILD ANALYSIS  (missing blocks + cost estimate)
+-- Returns two strings: missingText, costText
+-- ═══════════════════════════════════════════════════════════════════════
+local function analyseBuild(data)
+    if not data then return "No build loaded", "—" end
+
+    -- Count needed blocks
+    local needed = {}
+    for _, b in ipairs(data) do
+        needed[b.Name] = (needed[b.Name] or 0) + 1
+    end
+
+    -- Count what player owns (check backpack + plot)
+    local owned = {}
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if bp then
+        for _, tool in ipairs(bp:GetChildren()) do
+            owned[tool.Name] = (owned[tool.Name] or 0) + 1
+        end
+    end
+
+    -- Calculate missing and total cost
+    local missingLines = {}
+    local totalCost = 0
+    local totalMissing = 0
+
+    -- Sort block names for readable output
+    local sortedNames = {}
+    for name in pairs(needed) do sortedNames[#sortedNames+1] = name end
+    table.sort(sortedNames)
+
+    for _, name in ipairs(sortedNames) do
+        local need = needed[name]
+        local have = owned[name] or 0
+        local missing = math.max(0, need - have)
+        local cost = (BLOCK_COSTS[name] or 5) * missing  -- 5g default if unknown
+        totalCost = totalCost + cost
+        if missing > 0 then
+            totalMissing = totalMissing + missing
+            local costStr = cost > 0 and ("  [" .. cost .. "g]") or "  [chest/quest]"
+            missingLines[#missingLines+1] = string.format("  %-28s ×%d%s", name, missing, costStr)
+        end
+    end
+
+    local missingText, costText
+    if #missingLines == 0 then
+        missingText = "You have ALL blocks needed!"
+        costText = "Total cost: 0g  (you own everything)"
+    else
+        missingText = string.format("Missing %d block types (%d total):\n", #missingLines, totalMissing)
+            .. table.concat(missingLines, "\n")
+        costText = string.format("Estimated cost: %dg  (%d blocks to buy)", totalCost, totalMissing)
+    end
+
+    return missingText, costText
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- PLACEMENT  (real BABFT remote)
+-- Primary: ReplicatedStorage.Remotes.ListHandler:FireServer(nil, name, cf, color)
+-- ═══════════════════════════════════════════════════════════════════════
+local function getListHandler()
+    local rem = ReplicatedStorage:FindFirstChild("Remotes")
+    if rem then
+        local lh = rem:FindFirstChild("ListHandler")
+        if lh then return lh end
+    end
+    -- Deep scan fallback
+    for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("RemoteEvent") then
+            local n = v.Name:lower()
+            if n == "listhandler" or n == "placeblock" or n == "buildblock" or n == "addblock" then
+                return v
+            end
+        end
+    end
+    return nil
+end
+
+local function buildCFrame(rawCF)
+    local m = S.multiplier
+    local pos = rawCF.Position
+    local newPos = Vector3.new(pos.X*m + S.offX, pos.Y*m + S.offY, pos.Z*m + S.offZ)
+    local extraRot = CFrame.Angles(math.rad(S.rotX), math.rad(S.rotY), math.rad(S.rotZ))
+    local r00,r01,r02,r10,r11,r12,r20,r21,r22 = rawCF:GetComponents()
+    -- Drop the position part, keep rotation, apply extra
+    local rotOnly = CFrame.new(0,0,0, r00,r01,r02, r10,r11,r12, r20,r21,r22)
+    return CFrame.new(newPos) * extraRot * rotOnly
+end
+
+local function isInPlotBounds(pos)
+    if not S.safeMode then return true end
+    local plot = getPlot()
+    if not plot then return true end
+    local base = plot:FindFirstChild("Base") or plot.PrimaryPart
+    if not base then return true end
+    local lp = base.CFrame:PointToObjectSpace(pos)
+    local hs = base.Size / 2
+    return math.abs(lp.X) <= hs.X + 60
+        and math.abs(lp.Z) <= hs.Z + 60
+        and lp.Y > -300
+end
+
+local function placeOneBlock(blockEntry)
+    local name = blockEntry.Name
+    local cf   = buildCFrame(blockEntry.CF)
+    local col  = blockEntry.Color
+
+    if not isInPlotBounds(cf.Position) then
+        log("SAFE SKIP: " .. name .. " @ " .. tostring(cf.Position))
+        return false
+    end
+
+    local remote = getListHandler()
+    if not remote then
+        log("ERROR: Could not find placement RemoteEvent!")
+        return false
+    end
+
+    local ok, err = pcall(function()
+        remote:FireServer(nil, name, cf, col)
+    end)
+
+    if not ok then
+        log("Place failed [" .. name .. "]: " .. tostring(err))
+        return false
+    end
+    return true
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BUILD SESSION
+-- ═══════════════════════════════════════════════════════════════════════
+local function startBuild()
+    if S.running then log("Already building! Abort first.") return end
+    if not S.buildData or #S.buildData == 0 then log("No build data! Load a file first.") return end
+
+    local data = S.buildData
+    S.running = true
+    S.paused  = false
+    S.built   = 0
+    S.failed  = 0
+    S.total   = #data
+    S.status  = "Building... 0/" .. #data
+
+    log("Build started: " .. #data .. " blocks at " .. S.speed .. " bps")
+
+    S.thread = task.spawn(function()
+        for i, block in ipairs(data) do
+            -- wait while paused
+            while S.paused do task.wait(0.1) end
+            -- abort check
+            if not S.running then
+                log("Build aborted at block " .. i)
+                S.status = "Aborted at " .. i .. "/" .. S.total
+                return
+            end
+            -- place it
+            if placeOneBlock(block) then
+                S.built = S.built + 1
+            else
+                S.failed = S.failed + 1
+            end
+            -- update status
+            local pct = math.floor(S.built / S.total * 100)
+            S.status = string.format("Building %d/%d (%d%%)", S.built, S.total, pct)
+            -- throttle
+            task.wait(1 / math.max(S.speed, 1))
+        end
+        S.running = false
+        S.status = string.format("Done! Built:%d  Failed:%d  Total:%d", S.built, S.failed, S.total)
+        log(S.status)
+    end)
+end
+
+local function abortBuild()
+    S.running = false
+    S.paused  = false
+    S.status  = "Aborted."
+    log("Build aborted by user.")
+end
+
+local function togglePause()
+    if not S.running then return end
+    S.paused = not S.paused
+    S.status = S.paused and "Paused. Click Resume to continue." or "Resuming..."
+    log(S.paused and "Paused." or "Resumed.")
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- PREVIEW
+-- ═══════════════════════════════════════════════════════════════════════
+local function clearPreview()
+    for _, p in ipairs(S.prevParts) do pcall(function() p:Destroy() end) end
+    S.prevParts = {}
+    log("Preview cleared.")
+end
+
+local function showPreview()
+    clearPreview()
+    if not S.buildData then log("No data to preview.") return end
+    local cap = 500
+    local shown = 0
+    for _, b in ipairs(S.buildData) do
+        local cf = buildCFrame(b.CF)
+        local part = Instance.new("Part")
+        part.Size = Vector3.new(4, 1.2, 4)
+        part.CFrame = cf
+        part.Material = Enum.Material.Neon
+        part.Color = b.Color
+        part.Transparency = 0.4
+        part.Anchored = true
+        part.CanCollide = false
+        part.Name = "_AB_Preview"
+        part.Parent = Workspace
+        S.prevParts[#S.prevParts+1] = part
+        shown = shown + 1
+        if shown >= cap then
+            log("Preview capped at " .. cap .. " (build has " .. #S.buildData .. " blocks)")
+            break
+        end
+        task.wait()
+    end
+    log("Preview: " .. shown .. " markers placed.")
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- PLOT MANIPULATION
+-- ═══════════════════════════════════════════════════════════════════════
+local function forEachPlotPart(fn)
+    local plot = getPlot()
+    if not plot then log("Plot not found!") return 0 end
+    local n = 0
+    for _, obj in ipairs(plot:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Name ~= "Base" and not obj.Anchored then
+            fn(obj); n = n + 1
+        end
+    end
+    return n
+end
+
+local function movePlot(dx, dy, dz)
+    local d = Vector3.new(dx, dy, dz)
+    local n = forEachPlotPart(function(p) p.CFrame = p.CFrame + d end)
+    log(string.format("Moved %d parts (%.1f, %.1f, %.1f)", n, dx, dy, dz))
+end
+
+local function rotatePlot(axis, deg)
+    local plot = getPlot()
+    if not plot then return end
+    local base = plot:FindFirstChild("Base") or plot.PrimaryPart
+    if not base then log("No plot Base found!") return end
+    local pivot = base.CFrame
+    local rad = math.rad(deg)
+    local rotCF = axis=="X" and CFrame.Angles(rad,0,0)
+               or axis=="Y" and CFrame.Angles(0,rad,0)
+               or                CFrame.Angles(0,0,rad)
+    local n = forEachPlotPart(function(p)
+        p.CFrame = pivot * rotCF * (pivot:Inverse() * p.CFrame)
+    end)
+    log(string.format("Rotated %d parts %g° on %s-axis", n, deg, axis))
+end
+
+local function inspectPlot()
+    local plot = getPlot()
+    if not plot then log("Plot not found!") return end
+    local counts, total = {}, 0
+    for _, obj in ipairs(plot:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Name ~= "Base" then
+            counts[obj.Name] = (counts[obj.Name] or 0) + 1
+            total = total + 1
+        end
+    end
+    log("=== Plot: " .. total .. " parts ===")
+    local sorted = {}
+    for name, cnt in pairs(counts) do sorted[#sorted+1] = {name, cnt} end
+    table.sort(sorted, function(a,b) return a[2] > b[2] end)
+    for _, pair in ipairs(sorted) do
+        log(string.format("  %-28s x%d", pair[1], pair[2]))
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- SAVE
+-- ═══════════════════════════════════════════════════════════════════════
+local function saveBuild()
+    local plot = getPlot()
+    if not plot then log("Plot not found!") return end
+    local blocks = {}
+    for _, p in ipairs(plot:GetDescendants()) do
+        if p:IsA("BasePart") and p.Name ~= "Base" then
+            local cf = p.CFrame
+            blocks[#blocks+1] = {
+                n  = p.Name,
+                x  = math.floor(cf.X*100)/100,
+                y  = math.floor(cf.Y*100)/100,
+                z  = math.floor(cf.Z*100)/100,
+                rx = math.floor(math.deg(select(1, cf:ToEulerAnglesXYZ()))*100)/100,
+                ry = math.floor(math.deg(select(2, cf:ToEulerAnglesXYZ()))*100)/100,
+                rz = math.floor(math.deg(select(3, cf:ToEulerAnglesXYZ()))*100)/100,
+                r  = math.floor(p.Color.R*255),
+                g  = math.floor(p.Color.G*255),
+                b  = math.floor(p.Color.B*255),
+            }
+        end
+    end
+    local ok, json = pcall(HttpService.JSONEncode, HttpService, blocks)
+    if ok then
+        pcall(setclipboard, json)
+        log("Saved " .. #blocks .. " blocks to clipboard!")
+    else
+        log("Save error: " .. tostring(json))
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BUILD THE UI
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- NOTE: The library is already running from when you loaded it.
+-- All windows/tabs are children of the CoreGui "imgui" ScreenGui.
+
+local OPTS1 = {
+    main_color = Color3.fromRGB(41, 74, 122),
+    min_size   = Vector2.new(320, 460),
+    can_resize = true,
+}
+local OPTS2 = {
+    main_color = Color3.fromRGB(41, 74, 122),
+    min_size   = Vector2.new(300, 500),
+    can_resize = true,
+}
+
+-- ───────────────────────────────────────────────────────────────────────
+-- WINDOW 1: Auto Builder
+-- ───────────────────────────────────────────────────────────────────────
+local win1, _ = library:AddWindow("Auto Builder", OPTS1)
+
+-- ─── TAB: Build ────────────────────────────────────────────────────────
+local tabBuild, _ = win1:AddTab("Build")
+
+-- Status labels - we keep references so Heartbeat can update them
+local lblStatus   = tabBuild:AddLabel("Status: Ready")
+local lblProgress = tabBuild:AddLabel("[                    ] 0%")
+local lblLoaded   = tabBuild:AddLabel("Loaded: none")
+
+-- ── Load section ───────────────────────────────────────────────────────
+local fLoad, _ = tabBuild:AddFolder("Load Build File")
+
+fLoad:AddTextBox("Paste JSON or CSV build here, press Enter", function(raw)
+    local data, err = parseBuild(raw)
+    if data then
+        S.buildData = data
+        S.total = #data
+        S.status = "Loaded " .. #data .. " blocks. Ready to build!"
+        log("Loaded " .. #data .. " blocks from text input")
+    else
+        S.status = "Parse error: " .. tostring(err)
+        log("Parse error: " .. tostring(err))
+    end
+end, { clear = false })
+
+fLoad:AddButton("Load Clipboard", function()
+    local ok, raw = pcall(getclipboard)
+    if not ok or not raw or #raw < 3 then
+        log("Clipboard empty or unreadable")
+        S.status = "Clipboard empty!"
+        return
+    end
+    local data, err = parseBuild(raw)
+    if data then
+        S.buildData = data
+        S.total = #data
+        S.status = "Loaded " .. #data .. " blocks from clipboard!"
+        log("Loaded " .. #data .. " blocks from clipboard")
+        -- Auto-run analysis
+        local miss, cost = analyseBuild(data)
+        S.missingStr = miss
+        S.costStr    = cost
+        log("=== COST ANALYSIS ===")
+        log(cost)
+        log("=== MISSING BLOCKS ===")
+        log(miss)
+    else
+        S.status = "Load failed: " .. tostring(err)
+        log("Load failed: " .. tostring(err))
+    end
+end)
+
+fLoad:AddButton("Preview (neon markers)", function()
+    if S.buildData then
+        task.spawn(showPreview)
+    else
+        log("Load a build first!")
+    end
+end)
+
+fLoad:AddButton("Clear Preview Markers", function()
+    clearPreview()
+end)
+
+-- ── Analysis section ───────────────────────────────────────────────────
+local fAnalysis, _ = tabBuild:AddFolder("Block Analysis & Cost")
+
+fAnalysis:AddButton("Run Analysis (show missing + cost)", function()
+    if not S.buildData then
+        log("Load a build first!")
+        return
+    end
+    local miss, cost = analyseBuild(S.buildData)
+    S.missingStr = miss
+    S.costStr    = cost
+    log("=== COST ESTIMATE ===")
+    log(cost)
+    log("=== MISSING BLOCKS ===")
+    for line in miss:gmatch("[^\n]+") do log(line) end
+    S.status = cost
+end)
+
+-- ── Build controls ─────────────────────────────────────────────────────
+local fBuild, _ = tabBuild:AddFolder("Build Controls")
+
+fBuild:AddButton("START BUILD", function()
+    startBuild()
+end)
+
+local haPauseResume, _ = fBuild:AddHorizontalAlignment()
+haPauseResume:AddButton("PAUSE", function()
+    if S.running and not S.paused then togglePause() end
+end)
+haPauseResume:AddButton("RESUME", function()
+    if S.running and S.paused then togglePause() end
+end)
+
+fBuild:AddButton("ABORT", function()
+    abortBuild()
+end)
+
+-- ── Settings section ───────────────────────────────────────────────────
+local fSettings, _ = tabBuild:AddFolder("Settings")
+
+-- Safe mode switch
+local swSafe, _ = fSettings:AddSwitch("Safe Mode (plot bounds check)", function(v)
+    S.safeMode = v
+    log("Safe Mode: " .. tostring(v))
+end)
+swSafe:Set(true)
+
+-- Speed slider  NOTE: slider:Set() takes 0-100, NOT the actual value
+-- So to set speed=5 out of max=50, we pass (5/50)*100 = 10
+local slSpeed, _ = fSettings:AddSlider("Build Speed (blocks/sec)", function(v)
+    S.speed = v
+end, { min = 1, max = 50 })
+slSpeed:Set(10)  -- 10% of range = value 5 (since min=1, range=49, 10% ≈ 5)
+
+local slStep, _ = fSettings:AddSlider("Move Step (studs)", function(v)
+    S.moveStep = v
+end, { min = 1, max = 32 })
+slStep:Set(12)   -- 12% of 1-32 range ≈ 4 studs
+
+-- ── Default block dropdown ─────────────────────────────────────────────
+local fBlock, _ = tabBuild:AddFolder("Default Block (fallback)")
+
+local dropMat, _ = fBlock:AddDropdown("Material Blocks", function(v)
+    S.defaultBlock = v
+    log("Default block: " .. v)
+end)
+for _, b in ipairs(BLOCKS_MATERIAL) do dropMat:Add(b) end
+
+local dropAbil, _ = fBlock:AddDropdown("Ability Blocks", function(v)
+    S.defaultBlock = v
+    log("Default block: " .. v)
+end)
+for _, b in ipairs(BLOCKS_ABILITY) do dropAbil:Add(b) end
+
+local dropDeco, _ = fBlock:AddDropdown("Decoration Blocks", function(v)
+    S.defaultBlock = v
+    log("Default block: " .. v)
+end)
+for _, b in ipairs(BLOCKS_DECO) do dropDeco:Add(b) end
+
+-- ── Save section ───────────────────────────────────────────────────────
+local fSave, _ = tabBuild:AddFolder("Save Plot")
+
+fSave:AddButton("Save Plot to Clipboard (JSON)", function()
+    saveBuild()
+end)
+
+-- ─── TAB: Log ──────────────────────────────────────────────────────────
+local tabLog, _ = win1:AddTab("Log")
+
+tabLog:AddLabel("Auto Builder v6.0 — Live Log")
+tabLog:AddLabel("All actions appear here.")
+
+-- AddConsole returns (console_data, console_object)
+-- console_data has :Log(msg), :Set(text), :Get()
+local conData, _ = tabLog:AddConsole({ source = "Logs", y = 220 })
+S.con = conData  -- hook up logging
+
+tabLog:AddButton("Clear Log", function()
+    pcall(function() conData:Set("") end)
+    log("Log cleared.")
+end)
+
+-- Boot messages
+log("Auto Builder v6.0 ready.")
+log("Block list: " .. (#BLOCKS_MATERIAL + #BLOCKS_ABILITY + #BLOCKS_DECO) .. " blocks registered")
+log("Remote path: ReplicatedStorage.Remotes.ListHandler")
+log("RightShift = toggle UI visibility")
+
+-- ─── TAB: Plot Tools ───────────────────────────────────────────────────
+local tabPlot, _ = win1:AddTab("Plot")
+
+local fInspect, _ = tabPlot:AddFolder("Plot Inspector")
+fInspect:AddButton("Inspect Plot (count all parts)", function()
+    task.spawn(inspectPlot)
+end)
+
+-- ───────────────────────────────────────────────────────────────────────
+-- WINDOW 2: Adjust Build
+-- ───────────────────────────────────────────────────────────────────────
+local win2, _ = library:AddWindow("Adjust Build", OPTS2)
+
+-- ─── TAB: Mover ────────────────────────────────────────────────────────
+local tabMover, _ = win2:AddTab("Mover")
+
+-- Scale multiplier
+local slScale, _ = tabMover:AddSlider("Scale Multiplier (placement)", function(v)
+    S.multiplier = v
+end, { min = 1, max = 10 })
+slScale:Set(0)  -- 0% of range = min value = 1
+
+-- Move buttons
+local fMove, _ = tabMover:AddFolder("Move Plot Parts")
+
+-- Up/Down
+local haUD, _ = fMove:AddHorizontalAlignment()
+haUD:AddButton("Move Up", function()
+    movePlot(0, S.moveStep, 0)
+end)
+haUD:AddButton("Move Down", function()
+    movePlot(0, -S.moveStep, 0)
+end)
+
+-- Forward/Back
+local haFB, _ = fMove:AddHorizontalAlignment()
+haFB:AddButton("Move Fwd", function()
+    movePlot(0, 0, S.moveStep)
+end)
+haFB:AddButton("Move Back", function()
+    movePlot(0, 0, -S.moveStep)
+end)
+
+-- Left/Right
+local haLR, _ = fMove:AddHorizontalAlignment()
+haLR:AddButton("Move Right", function()
+    movePlot(S.moveStep, 0, 0)
+end)
+haLR:AddButton("Move Left", function()
+    movePlot(-S.moveStep, 0, 0)
+end)
+
+-- Offset textboxes (for placement, not existing parts)
+local fOff, _ = tabMover:AddFolder("Placement Offset (new blocks)")
+
+fOff:AddTextBox("Offset X (studs)", function(v)
+    S.offX = tonumber(v) or 0
+    log("Offset X = " .. S.offX)
+end)
+fOff:AddTextBox("Offset Y (studs)", function(v)
+    S.offY = tonumber(v) or 0
+    log("Offset Y = " .. S.offY)
+end)
+fOff:AddTextBox("Offset Z (studs)", function(v)
+    S.offZ = tonumber(v) or 0
+    log("Offset Z = " .. S.offZ)
+end)
+
+-- ─── TAB: Rotate ───────────────────────────────────────────────────────
+local tabRotate, _ = win2:AddTab("Rotate")
+
+-- Rotate plot parts
+local fRotPlot, _ = tabRotate:AddFolder("Rotate Existing Parts")
+
+local haRX, _ = fRotPlot:AddHorizontalAlignment()
+haRX:AddButton("X +90", function() rotatePlot("X", 90) end)
+haRX:AddButton("X -90", function() rotatePlot("X",-90) end)
+
+local haRY, _ = fRotPlot:AddHorizontalAlignment()
+haRY:AddButton("Y +90", function() rotatePlot("Y", 90) end)
+haRY:AddButton("Y -90", function() rotatePlot("Y",-90) end)
+
+local haRZ, _ = fRotPlot:AddHorizontalAlignment()
+haRZ:AddButton("Z +90", function() rotatePlot("Z", 90) end)
+haRZ:AddButton("Z -90", function() rotatePlot("Z",-90) end)
+
+-- Placement rotation sliders
+local fRotPlace, _ = tabRotate:AddFolder("Placement Rotation (new blocks)")
+
+local slRX, _ = fRotPlace:AddSlider("Rot X (degrees)", function(v)
+    S.rotX = v
+end, { min = 0, max = 360 })
+slRX:Set(0)
+
+local slRY, _ = fRotPlace:AddSlider("Rot Y (degrees)", function(v)
+    S.rotY = v
+end, { min = 0, max = 360 })
+slRY:Set(0)
+
+local slRZ, _ = fRotPlace:AddSlider("Rot Z (degrees)", function(v)
+    S.rotZ = v
+end, { min = 0, max = 360 })
+slRZ:Set(0)
+
+fRotPlace:AddButton("Reset Rotation to 0,0,0", function()
+    S.rotX, S.rotY, S.rotZ = 0, 0, 0
+    slRX:Set(0); slRY:Set(0); slRZ:Set(0)
+    log("Placement rotation reset.")
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- HEARTBEAT: Update live labels every frame
+-- ═══════════════════════════════════════════════════════════════════════
+RunService.Heartbeat:Connect(function()
+    pcall(function()
+        -- Status line
+        lblStatus.Text = "Status: " .. S.status
+
+        -- ASCII progress bar (20 chars)
+        if S.total > 0 then
+            local pct  = S.built / S.total
+            local fill = math.floor(pct * 20)
+            local bar  = string.rep("|", fill) .. string.rep("-", 20 - fill)
+            lblProgress.Text = string.format("[%s] %d%%", bar, math.floor(pct * 100))
+        else
+            lblProgress.Text = "[--------------------] 0%"
+        end
+
+        -- Loaded block count
+        if S.buildData then
+            lblLoaded.Text = "Loaded: " .. S.total .. " blocks"
+        else
+            lblLoaded.Text = "Loaded: none"
+        end
+    end)
+end)
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- SHOW TABS & POSITION WINDOWS
+-- ═══════════════════════════════════════════════════════════════════════
+-- Show the first tab on each window so they're visible by default
+pcall(function() tabBuild:Show() end)
+pcall(function() tabMover:Show() end)
+
+-- Space windows side by side
+library:FormatWindows()
+
+-- Final boot print
+print("=================================================")
+print("  Auto Builder v6.0 - LOADED & UI ACTIVE")
+print("  RightShift = toggle UI")
+print("  Window 1: Auto Builder (Build/Log/Plot tabs)")
+print("  Window 2: Adjust Build (Mover/Rotate tabs)")
+print("  Blocks registered: " .. (#BLOCKS_MATERIAL + #BLOCKS_ABILITY + #BLOCKS_DECO))
+print("=================================================")
